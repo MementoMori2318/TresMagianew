@@ -16,14 +16,19 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
         exit;
     }
 
-    // Debug statement to ensure the ID is being received
-    error_log("Delete request received for ID: " . $id);
-
-    // Start a transaction to ensure both deletions occur or none at all
+    // Start a transaction to ensure all deletions occur or none at all
     $conn->begin_transaction();
 
     try {
-        // Delete from the user_schedule table first
+        // Delete from the attendance table first
+        $stmt = $conn->prepare("DELETE FROM attendance WHERE schedules_id = ?");
+        $stmt->bind_param("i", $id);
+        if (!$stmt->execute()) {
+            throw new Exception("Error deleting from attendance: " . $stmt->error);
+        }
+        $stmt->close();
+
+        // Delete from the user_schedules table
         $stmt = $conn->prepare("DELETE FROM user_schedules WHERE schedules_id = ?");
         $stmt->bind_param("i", $id);
         if (!$stmt->execute()) {
@@ -59,5 +64,4 @@ if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])
     header("Location: schedule.php?error_message=" . urlencode("Invalid request parameters."));
     exit; // Ensure no further code is executed after redirection
 }
-// END Edit Schedule
 ?>

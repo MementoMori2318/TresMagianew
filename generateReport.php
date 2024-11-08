@@ -3,10 +3,10 @@ require('./fpdf186/fpdf.php');
 include('db.php');
 session_start();
 
-// Check if the user is logged in
-if (!isset($_SESSION['loggedin']) || $_SESSION['loggedin'] !== true || $_SESSION['role'] !== 'Admin') {
+// Check if the user is logged in and is either an Admin or Faculty member
+if (!isset($_SESSION['loggedin']) || ($_SESSION['role'] !== 'Admin' && $_SESSION['role'] !== 'Faculty')) {
     header('Location: login.php');
-    exit;
+    exit();
 }
 
 // Get the selected schedule and date from the form submission

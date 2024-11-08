@@ -19,10 +19,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         // Verify the password
         if (password_verify($password, $user['password'])) {
             $_SESSION['loggedin'] = true;
+            $_SESSION['id'] = $user['id'];   // Add this line to store user ID
             $_SESSION['name'] = $user['name'];
             $_SESSION['email'] = $user['email'];
             $_SESSION['role'] = $user['role'];
-
+    
             // Redirect based on role
             if (strtolower($user['role']) === 'faculty') {  // Case-insensitive comparison
                 header('Location: faculty_dashboard.php');

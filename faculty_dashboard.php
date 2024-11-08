@@ -1,4 +1,9 @@
 <?php
+// Enable error reporting for debugging
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+include("db.php");
 session_start();
 
 // Check if the user is logged in and is a faculty member
@@ -6,75 +11,228 @@ if (!isset($_SESSION['loggedin']) || $_SESSION['role'] !== 'Faculty') {
     header('Location: login.php');
     exit();
 }
-?>
 
+
+// Handle schedule selection from dropdown
+$selectedScheduleId = isset($_POST['schedule']) ? $_POST['schedule'] : null;
+
+// Query to get schedules linked to the faculty member
+$scheduleDropdownQuery = "
+    SELECT s.id, CONCAT(s.day_of_week, ' ', s.start_time, '-', s.end_time, ' ', su.subject_name, ' ', se.section_name) AS schedule_info FROM schedules s INNER JOIN subject su ON s.subject_id = su.subject_id INNER JOIN section se ON s.section_id = se.section_id INNER JOIN user_schedules us ON us.schedules_id = s.id WHERE us.users_id = ?
+
+";
+$dropdownStmt = $conn->prepare($scheduleDropdownQuery);
+$dropdownStmt->bind_param("i", $_SESSION['id']);  // Pass the faculty ID from the session
+$dropdownStmt->execute();
+$dropdownResult = $dropdownStmt->get_result();
+
+// Set the active schedule ID
+$activeScheduleId = $selectedScheduleId ?: null;
+
+// Attendance query for the selected schedule and date
+$selectedDate = isset($_POST['attendance_date']) ? $_POST['attendance_date'] : date('Y-m-d');
+
+$attendanceQuery = "
+    SELECT 
+        u.name,
+        u.user_id AS student_id,
+        CONCAT(u.year, '-', u.course, '-', u.section) AS year_course_section,
+        a.date,
+        a.time_in,
+        a.time_out,
+        CASE 
+            WHEN a.id IS NOT NULL THEN 'Present'
+            ELSE 'Absent'
+        END AS attendance_status
+    FROM 
+        user_schedules us
+    JOIN 
+        users u ON us.users_id = u.id
+    LEFT JOIN 
+        attendance a ON us.schedules_id = a.schedules_id 
+        AND a.users_id = u.id
+        AND a.date = ?
+    WHERE 
+        us.schedules_id = ?
+";
+
+$attendanceStmt = $conn->prepare($attendanceQuery);
+$attendanceStmt->bind_param("si", $selectedDate, $activeScheduleId);
+$attendanceStmt->execute();
+$attendanceResult = $attendanceStmt->get_result();
+
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Faculty Dashboard - Tresmagia SmartLock</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <meta name="description" content="" />
+    <meta name="author" content="" />
+    <title>Tresmagia SmartLock</title>
+    <link href="https://cdn.jsdelivr.net/npm/simple-datatables@7.1.2/dist/style.min.css" rel="stylesheet" />
+    <link href="css/styles.css" rel="stylesheet" />
+    <script src="https://use.fontawesome.com/releases/v6.3.0/js/all.js" crossorigin="anonymous"></script>
 </head>
-<body class="bg-light">
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div class="container-fluid">
-            <a class="navbar-brand" href="#">Faculty Dashboard</a>
-            <div class="collapse navbar-collapse">
-                <ul class="navbar-nav ms-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="logout.php">Logout</a>
-                    </li>
-                </ul>
+<body class="sb-nav-fixed">
+<nav class="sb-topnav navbar navbar-expand navbar-dark bg-dark">
+    <!-- Navbar Brand-->
+    <!-- Sidebar Toggle-->
+    <button class="btn btn-link btn-sm order-1 order-lg-0 me-4 me-lg-0" id="sidebarToggle" href="#!"><i class="fas fa-bars"></i></button>
+    <!-- Navbar Search-->
+    <form class="d-none d-md-inline-block form-inline ms-auto me-0 me-md-3 my-2 my-md-0"></form>
+    <!-- Navbar-->
+    <ul class="navbar-nav ms-auto ms-md-0 me-3 me-lg-4">
+        <li class="nav-item dropdown">
+            <a class="nav-link dropdown-toggle" id="navbarDropdown" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false"><i class="fas fa-user fa-fw"></i></a>
+            <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarDropdown">
+                <li><a class="dropdown-item" href="login.php">Logout</a></li>
+            </ul>
+        </li>
+    </ul>
+</nav>
+<div id="layoutSidenav">
+    <div id="layoutSidenav_nav">
+        <nav class="sb-sidenav accordion sb-sidenav-dark" id="sidenavAccordion">
+            <div class="sb-sidenav-menu">
+                <div class="nav">
+                </div>
             </div>
-        </div>
-    </nav>
+            <div class="sb-sidenav-footer">
+                  <div class="small">Logged in as: <?php echo htmlspecialchars($_SESSION['name']); ?></div>
+            </div>
+        </nav>
+    </div>
+    <div id="layoutSidenav_content">
+        <main>
+            <div class="container-fluid px-4">
+            <div class="d-sm-flex align-items-center justify-content-between mb-4">
+                <h1 class="mt-4">Student Attendance</h1>
+                
+                <!-- Wrap the form inside a div and use Bootstrap classes to adjust size and spacing -->
+                <div class="d-inline-block me-2">
+                <form method="post" action="">
+                        <div class="form-group mb-0 d-flex align-items-center">
+                            <!-- Schedule Dropdown -->
+                            <select id="scheduleSelect" name="schedule" class="form-select form-select-sm me-2" onchange="this.form.submit()" style="width: auto;">
+                                <option value="">-- Show Current Schedule --</option>
+                                <?php
+                                if ($dropdownResult->num_rows > 0) {
+                                    while ($row = $dropdownResult->fetch_assoc()) {
+                                        $selected = ($row['id'] == $activeScheduleId) ? 'selected' : '';
+                                        echo "<option value='{$row['id']}' $selected>{$row['schedule_info']}</option>";
+                                    }
+                                } else {
+                                    echo "<option value=''>No schedules available</option>";
+                                }
+                                ?>
+                            </select>
 
-    <div class="container mt-5">
-        <h1>Welcome, <?php echo htmlspecialchars($_SESSION['name']); ?>!</h1>
-        <p class="lead">Here is your faculty dashboard where you can manage attendance, schedules, and more.</p>
+                            <!-- Date Input -->
+                            <input type="date" name="attendance_date" class="form-control form-control-sm me-2" value="<?php echo isset($_POST['attendance_date']) ? htmlspecialchars($_POST['attendance_date']) : ''; ?>" onchange="this.form.submit()" style="width: auto;">
+                        </div>
+                    </form>
+                </div>
 
-        <div class="row mt-4">
-            <div class="col-md-4">
-                <div class="card">
-                    <div class="card-header bg-primary text-white">
-                        Today's Schedule
+                <a href="#" class="d-none d-sm-inline-block btn btn-sm btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#generateReportModal">
+                    <i class="fas fa-download fa-sm text-white-50"></i> Generate Attendance Report
+                </a>
+            </div>
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <i class="fas fa-table me-1"></i>
+                        Student Attendance
                     </div>
+                   
                     <div class="card-body">
-                        <p>No classes scheduled for today. (Placeholder)</p>
-                        <!-- You can fetch and display today's schedule dynamically here -->
+                        <table id="datatablesSimple">
+                            <thead>
+                                <tr>
+                                    <th>NAME</th>
+                                    <th>STUDENT ID</th>
+                                    <th>YEAR COURSE & SECTION</th>
+                                    <th>DATE</th>
+                                    <th>TIME IN</th>
+                                    <th>TIME OUT</th>
+                                    <th>STATUS</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            <?php
+                                if ($attendanceResult->num_rows > 0) {
+                                    // Process rows if available
+                                    while ($row = $attendanceResult->fetch_assoc()) {
+                                        echo "<tr>";
+                                        echo "<td>" . htmlspecialchars($row['name']) . "</td>";
+                                        echo "<td>" . htmlspecialchars($row['student_id']) . "</td>";
+                                        echo "<td>" . htmlspecialchars($row['year_course_section']) . "</td>";
+                                        echo "<td>" . ($row['date'] ? date('F d, Y', strtotime($row['date'])) : '') . "</td>";
+                                        echo "<td>" . ($row['time_in'] ? date('h:i A', strtotime($row['time_in'])) : '') . "</td>";
+                                        echo "<td>" . ($row['time_out'] ? date('h:i A', strtotime($row['time_out'])) : '') . "</td>";
+                                        echo "<td>" . htmlspecialchars($row['attendance_status']) . "</td>";
+                                        echo "</tr>";
+                                    }
+                                } else {
+                                    echo "<tr><td colspan='7'>No attendance records found for the selected schedule.</td></tr>";
+                                }
+                                ?>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
-
-            <div class="col-md-4">
-                <div class="card">
-                    <div class="card-header bg-success text-white">
-                        Attendance Overview
-                    </div>
-                    <div class="card-body">
-                        <p>Present: 20</p>
-                        <p>Absent: 5</p>
-                        <p>Late: 2</p>
-                        <!-- These can be dynamically generated based on the database -->
+        </main>
+        <footer class="py-4 bg-light mt-auto">
+            <div class="container-fluid px-4">
+                <div class="d-flex align-items-center justify-content-between small">
+                    <div class="text-muted">Copyright &copy; SmartLock 2024</div>
+                    <div>
+                        <a href="aboutus.php">About Us</a>
+                        &middot;
+                        <a href="#">Privacy Policy</a>
+                        &middot;
+                        <a href="#">Terms &amp; Conditions</a>
                     </div>
                 </div>
             </div>
-
-            <div class="col-md-4">
-                <div class="card">
-                    <div class="card-header bg-warning text-white">
-                        Announcements
+        </footer>
+    </div>
+</div>
+<!-- Modal HTML -->
+<div class="modal fade" id="generateReportModal" tabindex="-1" aria-labelledby="generateReportModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="generateReportModalLabel">Generate Attendance Report</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Would you like to download the Attendance report for this schedule</p>
+                <form id="reportForm" method="post" action="generateReport.php">
+                    <div class="mb-3">
+                        <!-- <label for="reportEmail" class="form-label">Email to:</label> -->
+                        <!-- <input type="email" class="form-control" id="reportEmail" name="report_email" placeholder="Enter email address"> -->
                     </div>
-                    <div class="card-body">
-                        <p>No new announcements.</p>
-                        <!-- Announcements can be dynamically fetched from the database -->
-                    </div>
-                </div>
+                    <input type="hidden" name="schedule_id" value="<?php echo htmlspecialchars($selectedScheduleId); ?>">
+                    <input type="hidden" name="attendance_date" value="<?php echo htmlspecialchars($selectedDate); ?>">
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="submit" class="btn btn-primary" form="reportForm" name="action" value="download">Download Now</button>
+                <!-- <button type="submit" class="btn btn-secondary" form="reportForm" name="action" value="email">Email Report</button> -->
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
             </div>
         </div>
     </div>
+</div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+<script src="js/scripts.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.8.0/Chart.min.js" crossorigin="anonymous"></script>
+<script src="assets/demo/chart-area-demo.js"></script>
+<script src="assets/demo/chart-bar-demo.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/simple-datatables@7.1.2/dist/umd/simple-datatables.min.js" crossorigin="anonymous"></script>
+<script src="js/datatables-simple-demo.js"></script>
 </body>
-</html>
+</html> 
